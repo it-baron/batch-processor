@@ -66,8 +66,8 @@ public abstract class BatchProcessor<T extends BatchProcessor.HasBatchKey<K>, K>
         }
 
         if (flushTimeout > 0) {
-            this.threadPool = Executors.newScheduledThreadPool(10);
-            this.threadPool.scheduleWithFixedDelay((Runnable) this::flushAllExpired,
+            this.threadPool = Executors.newScheduledThreadPool(concurrencyLevel);
+            this.threadPool.scheduleWithFixedDelay(this::flushAllExpired,
                     flushTimeout, flushTimeout, TimeUnit.MILLISECONDS);
         }
     }
@@ -85,10 +85,8 @@ public abstract class BatchProcessor<T extends BatchProcessor.HasBatchKey<K>, K>
             q.offer(obj);
             if (q.size() == batchSize) {
                 q.drainTo(arr);
-                return new LinkedBlockingQueue<>(batchSize);
-            } else {
-                return q;
             }
+            return q;
         });
 
         if (!arr.isEmpty()) {
@@ -100,16 +98,17 @@ public abstract class BatchProcessor<T extends BatchProcessor.HasBatchKey<K>, K>
         timeouts.entrySet().stream()
                 .filter(e -> System.currentTimeMillis() - e.getValue() >= flushTimeout)
                 .forEach(e -> {
+                    List<T> arr = new ArrayList<>();
                     batches.computeIfPresent(e.getKey(), (k, q) -> {
-                        List<T> arr = new ArrayList<>();
                         q.drainTo(arr);
-                        flush(e.getKey(), arr);
-                        return new LinkedBlockingQueue<>(batchSize);
+                        return q;
                     });
+                    flush(e.getKey(), arr);
                 });
     }
 
     private BlockingQueue<T> ensureQueue(K key) {
+        if (key == null) throw new IllegalArgumentException("key");
         return batches.computeIfAbsent(key, $ -> {
             timeouts.computeIfAbsent(key, $$ -> System.currentTimeMillis());
             return new LinkedBlockingQueue<>(batchSize);
@@ -117,7 +116,9 @@ public abstract class BatchProcessor<T extends BatchProcessor.HasBatchKey<K>, K>
     }
 
     protected boolean flush(K key, List<T> items) {
-        if (items.size() == 0) return false;
+        if (items == null) return false;
+        if (items.isEmpty()) return false;
+
         save(items);
         timeouts.computeIfPresent(key, (k, q) -> System.currentTimeMillis());
         return true;
